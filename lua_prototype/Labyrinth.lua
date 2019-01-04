@@ -11,31 +11,42 @@ local Labyrinth = setmetatable(
   -- metatable for cell
   cell_mt = {
     __index = function (self, key)
-      local map = self.map
+      local parent = self.parent
       assert(string.len(key) == 1 and string.find('_news', key), 'invalid index \'' .. key .. '\' requested')
-      if key == 'n' then return map.Cells[self.x][self.y - 1].s end
-      if key == 'w' then return map.Cells[self.x - 1][self.y].e end
-      return map.Cells[self.x][self.y][key]
+      if key == 'n' then return parent.Cells[self.x][self.y - 1].s end
+      if key == 'w' then return parent.Cells[self.x - 1][self.y].e end
+      return parent.Cells[self.x][self.y][key]
     end,
     __newindex = function (self, key, value)
       assert(string.len(key) == 1 and string.find('_news', key), 'invalid index \'' .. key .. '\' requested')
-      local map = self.map
+      local parent = self.parent
       if key == 'n' then
-        map.Cells[self.x][self.y - 1].s = value
+        parent.Cells[self.x][self.y - 1].s = value
       elseif key == 'w' then
-        map.Cells[self.x - 1][self.y].e = value
+        parent.Cells[self.x - 1][self.y].e = value
       else
-        map.Cells[self.x][self.y][key] = value
+        parent.Cells[self.x][self.y][key] = value
       end
     end,
     __tostring = function (self)
-      local n = string.rep(self.map.Cells[self.x][self.y - 1].s, 3)
-      local w = self.map.Cells[self.x - 1][self.y].e
-      local e = self.map.Cells[self.x][self.y].e
-      local s = string.rep(self.map.Cells[self.x][self.y].s, 3)
-      local loc = self.map.Cells[self.x][self.y]['_']
+      local parent = self.parent
+      local n = string.rep(parent.Cells[self.x][self.y - 1].s, 3)
+      local w = parent.Cells[self.x - 1][self.y].e
+      local e = parent.Cells[self.x][self.y].e
+      local s = string.rep(parent.Cells[self.x][self.y].s, 3)
+      local loc = parent.Cells[self.x][self.y]['_']
       if string.len(loc) == 1 then loc = loc .. ' ' end
       return string.format('+%s+\n%s%3s%s\n+%s+', n, w, loc, e, s)
+    end
+  },
+
+  obj_mt = {
+    __tostring = function (self)
+      local result = {}
+      for k, v in pairs(self) do
+        table.insert(result, string.format('%s=%s', k, tostring(v)))
+      end
+      return '{ ' .. table.concat(result, ', ') .. ' }'
     end
   },
 
@@ -61,11 +72,15 @@ local Labyrinth = setmetatable(
         if not self.Cells[x] then
           self.Cells[x] = {}
         end
-        self.Cells[x][y] = { x = x, y = y, map = self }
+        self.Cells[x][y] = { x = x, y = y, parent = self }
         self.Cells[x][y].s = border
         -- extract location info and vertical borders from previous line, if it exists
         self.Cells[x][y].e = (i == 1) and '' or string.sub(map[i - 1], x * 4 + 4, x * 4 + 4)
-        self.Cells[x][y]._ = (i == 1) and '' or string.sub(map[i - 1], x * 4 + 1, x * 4 + 3):gsub('%s+', '')
+        obj = (i == 1) and '' or string.sub(map[i - 1], x * 4 + 1, x * 4 + 3):gsub('%s+', '')
+        self.Cells[x][y]._ = obj
+        if obj ~= '' and string.find('<>^v', obj) == nil then
+          self.Objects[obj] = { name = obj, x = x, y = y, parent = self }
+        end
         x = x + 1
       end -- for border
       if x > 0 then
@@ -85,9 +100,13 @@ local Labyrinth = setmetatable(
 
   toString = function (self, obj)
     if type(obj) == 'table' then
+      local mt = getmetatable(obj)
+      if mt and mt.__tostring then
+        return tostring(obj)
+      end
       local result = {}
       for k, v in pairs(obj) do
-        table.insert(result, string.format('%s=%s', k, type(v) == 'table' and self.toString(v) or tostring(v)))
+        table.insert(result, string.format('%s=%s', k, self:toString(v)))
       end
       if #result == 0 then
         return '{}'
@@ -99,11 +118,18 @@ local Labyrinth = setmetatable(
 },
 -- metatable for Labyrinth object
 {
-  __call = function (self, x, y)
-    assert( 1 <= x and x <= self.SizeX and 1 <= y and y <= self.SizeY,
-            string.format('cell (%d,%d) is out of range', x , y))
-    return setmetatable(self.Cells[x][y], self.cell_mt)
+  __call = function (self, arg1, arg2)
+    if type(arg1) == 'number' and type(arg2) == 'number' then
+      local x, y = arg1, arg2
+      assert( 1 <= x and x <= self.SizeX and 1 <= y and y <= self.SizeY,
+              string.format('cell (%d,%d) is out of range', x , y))
+      return setmetatable(self.Cells[x][y], self.cell_mt)
+    elseif arg2 == nil and type(arg1) == 'string' then
+      local objName = arg1
+      return setmetatable(self.Objects[objName], self.obj_mt)
+    end
   end,
+
   __tostring = function (self)
     local result = ''
     for y = 0, self.SizeY do
